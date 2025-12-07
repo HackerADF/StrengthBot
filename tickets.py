@@ -11,7 +11,8 @@ async def create_ticket_db():
             CREATE TABLE IF NOT EXISTS tickets (
                 channel_id INTEGER PRIMARY KEY,
                 user_id INTEGER NOT NULL,
-                reason TEXT NOT NULL
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL
             );
         """)
         await db.commit()
