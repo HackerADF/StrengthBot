@@ -13,7 +13,7 @@ from typing import Union, Optional
 import aiosqlite
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import View
 from dotenv import load_dotenv
 
@@ -44,6 +44,8 @@ OTHER_CATEGORY = 1446711847339425902
 intents = discord.Intents.all()
 bot = commands.AutoShardedBot(command_prefix="!", intents=intents,
                               activity=discord.Streaming(name='ADF coding me!', url="https://nauticalhosting.org"))
+start_time = time.time()
+
 # Helper functions
 def load_ticket_channels():
     if not os.path.exists(TICKETS_FILE):
@@ -1104,8 +1106,20 @@ async def on_ready():
     for guild in bot.guilds:
         bot.add_view(VerificationView(bot, guild.id))
     bot.add_view(TicketView())
-    activity = discord.Game(name="play.strengthkits.com")
+    update_uptime.start()
+
+@tasks.loop(seconds=2)
+async def update_uptime():
+    elapsed = int(time.time() - start_time)
+    hours, remainder = divmod(elapsed, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
     await bot.change_presence(
-        activity=activity)
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"Uptime: {uptime_str}"
+        )
+    )
 
 bot.run(DISCORD_TOKEN)
