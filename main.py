@@ -1,31 +1,20 @@
 # === Standard Library Imports ===
 import asyncio
-import base64
 import datetime
 import json
 import logging
 import os
-import io
 import random
-import re
-import sys
-import subprocess
 import time
 from datetime import datetime, timedelta
-from io import BytesIO
-from operator import truediv
 from typing import Union, Optional
 
 # === Third-Party Imports ===
-import aiohttp
 import aiosqlite
 import discord
-import requests
-from charset_normalizer.md import getLogger
-from discord import app_commands, ButtonStyle, Webhook
-from discord.ext import commands, tasks
+from discord import app_commands
+from discord.ext import commands
 from discord.ui import View
-from discord import FFmpegPCMAudio
 from dotenv import load_dotenv
 
 # == Local Imports ===
