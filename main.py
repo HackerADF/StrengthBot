@@ -1,13 +1,16 @@
 # === Standard Library Imports ===
 import asyncio
+import atexit
 import datetime
+import html
 import json
 import logging
 import os
 import random
+import re
 import time
-from datetime import datetime, timedelta
-from typing import Union, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Union, Optional, List, Tuple, Dict, Any
 
 # === Third-Party Imports ===
 import aiosqlite
@@ -15,15 +18,15 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from discord.ui import View
+import markdown
 from dotenv import load_dotenv
 
-# == Local Imports ===
+# === Local Imports ===
 from libs import verbose
+from libs.database_utils import TranscriptDB
 
-# === Runtime Cleanup & Signal Handling ===
-import atexit
 
-TICKET_DATABASE = "tickets.db"
+TICKET_DATABASE = "data/databases/tickets.db"
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 _log = logging.getLogger("discord")
@@ -140,6 +143,16 @@ async def getUserTicketCount(user: discord.User) -> int:
         result = await cursor.fetchone()
 
         return int(result[0])
+
+_SANITIZE_SCRIPT_RE = re.compile(r"<\s*script.*?>.*?<\s*/\s*script\s*>", re.IGNORECASE | re.DOTALL)
+_ON_ATTR_RE = re.compile(r'\s(on\w+)\s*=\s*(".*?"|\'.*?\'|[^\s>]+)', re.IGNORECASE)
+
+def _sanitize_html(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    cleaned = _SANITIZE_SCRIPT_RE.sub("", raw_html)
+    cleaned = _ON_ATTR_RE.sub("", cleaned)
+    return cleaned
 
 class VerificationChallengeView(discord.ui.View):
     def __init__(self, user: discord.Member, code: int):
@@ -260,8 +273,7 @@ class TicketDropdown(discord.ui.Select):
             )
 
         elif value == "ask_question":
-            await interaction.response.defer()
-            await self.parent_view.create_ticket(interaction, "Ask a Question")
+            await interaction.response.send_modal(TicketQuestionModal(reason="ask a question", interaction=interaction, parent_view=self.parent_view))
 
         elif value == "need_support":
             await interaction.response.send_modal(
@@ -329,7 +341,7 @@ class TicketView(discord.ui.View):
             embed = discord.Embed(
                 description=(
                     f"**What is your Minecraft username?**\n```{answers['name']}```\n"
-                    f"**Do you play on Java or Bedrock?**\n```{answers['version ']}```\n"
+                    f"**Do you play on Java or Bedrock?**\n```{answers['version']}```\n"
                     f"**Why did you receive your punishment?**\n```{answers['punishment_reason'] if answers['punishment_reason'] else 'Not answered.'}```\n"
                     f"**Why should your punishment be revoked?**\n```{answers['revoke_reason'] if answers['revoke_reason'] else 'No answer provided.'}```\n"
                 ),
@@ -341,6 +353,12 @@ class TicketView(discord.ui.View):
                                   description=(
                                       f"**What is your name?**\n```{answers['name']}```\n"
                                       f"**How can we assist you today?**\n```{answers['support_reason']}```\n"
+                                  ))
+            await channel.send(embed=embed, view=TicketPanelView(channel))
+        elif reason.lower() == "ask a question":
+            embed = discord.Embed(title="Please answer the following questions:",
+                                  description=(
+                                      f"**What is your question?**\n```{answers['question']}```\n"
                                   ))
             await channel.send(embed=embed, view=TicketPanelView(channel))
         elif reason.lower() == "report a bug":
@@ -357,11 +375,11 @@ class TicketView(discord.ui.View):
         elif reason.lower() == "report a user":
             embed = discord.Embed(
                 description=(
-                    f"**What is your name?**\n```{answers['name']}```\n"
+                    f"**What is your Minecraft username?**\n```{answers['name']}```\n"
                     f"**Who are you reporting?**\n```{answers['reported_user']}```\n"
-                    f"**Why are you reporting them?**\n```{answers['reason'] if answers['reason'] else 'No answered provided.'}```\n"
+                    f"**Where did this occur?**\n```{answers['place']}```\n"
+                    f"**Why are you reporting them?**\n```{answers['report_reason'] if answers['report_reason'] else 'No answered provided.'}```\n"
                     f"**Do you have Evidence?**\n```{answers['has_proof']}```\n"
-                    f"**Any additional information?**:\n```{answers['extra'] if answers['extra'] else 'No answer provided.'}```"
                 )
             )
             await channel.send(embed=embed, view=TicketPanelView(channel))
@@ -375,7 +393,8 @@ class TicketView(discord.ui.View):
                     f"**Any additional information?**:\n```{answers['additional'] if answers['additional'] else 'No answer provided.'}```"
                 )
             )
-            await channel.send(embed=embed, view=TicketPanelView(channel))
+            msg = await channel.send(embed=embed, view=TicketPanelView(channel))
+            await msg.pin()
         else:
             return
         embed = discord.Embed(description=f"Opened a new ticket: {channel.mention}",
@@ -457,6 +476,431 @@ class CloseReasonModal(discord.ui.Modal, title="Close Ticket With Reason"):
         await log_ticket_closure(bot, self.channel, interaction.user, creator, self.reason.value)
         await asyncio.sleep(5)
         await self.channel.delete()
+
+class TranscriptButton(discord.ui.View):
+    def __init__(self, bot: discord.Client, channel_id: int):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.channel_id = int(channel_id)
+
+        btn = discord.ui.Button(
+            label="Transcript",
+            style=discord.ButtonStyle.green,
+            custom_id=str(self.channel_id)
+        )
+        btn.callback = self._on_click
+        self.add_item(btn)
+
+    async def _resolve_member_info(self, guild: discord.Guild, user_id: int) -> Tuple[str, str, str, bool]:
+        """Return (display_name, avatar_url, color_hex, is_bot) - best effort."""
+        member = guild.get_member(user_id) if guild else None
+        if member:
+            display = member.display_name
+            try:
+                avatar = str(member.display_avatar.url)
+            except Exception:
+                avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
+            color_hex = "#ffffff"
+            try:
+                if member.color and member.color.value != 0:
+                    rgb = member.color.to_rgb()
+                    color_hex = '#%02x%02x%02x' % rgb
+                else:
+                    # fallback to highest role color if any
+                    roles = [r for r in member.roles if r.color.value != 0]
+                    if roles:
+                        rgb = roles[-1].color.to_rgb()
+                        color_hex = '#%02x%02x%02x' % rgb
+            except Exception:
+                color_hex = "#ffffff"
+            return display, avatar, color_hex, member.bot
+        try:
+            user = await self.bot.fetch_user(user_id)
+            display = user.name
+            avatar = str(user.display_avatar.url)
+            return display, avatar, "#ffffff", getattr(user, "bot", False)
+        except Exception:
+            return str(user_id), "https://cdn.discordapp.com/embed/avatars/0.png", "#ffffff", False
+
+    def _render_markdown_safe(self, raw_text: str) -> str:
+        """Render Markdown -> HTML, then sanitize lightly (strip scripts/on*)."""
+        if not raw_text:
+            return ""
+        try:
+            html_out = markdown.markdown(
+                raw_text,
+                extensions=["fenced_code", "codehilite", "sane_lists", "nl2br", "smarty"]
+            )
+        except Exception:
+            html_out = html.escape(raw_text).replace("\n", "")
+        safe = _sanitize_html(html_out)
+        return safe
+
+    def _resolve_mentions(self, guild: discord.Guild, text: str) -> str:
+        if not text:
+            return text
+
+        import re
+        import html
+
+        # ---------- CHANNELS ----------
+        def repl_channel(match):
+            cid = int(match.group(1))
+            ch = guild.get_channel(cid) if guild else None
+            if ch:
+                disp = f"#{ch.name}"
+            else:
+                disp = f"#deleted-channel-{cid}"
+
+            return (
+                f"<span class='mention channel'>"
+                f"{html.escape(disp)}"
+                f"</span>"
+            )
+
+        text = re.sub(r"<#(\d+)>", repl_channel, text)
+
+        # ---------- USERS ----------
+        def repl_user(match):
+            uid = int(match.group("id"))
+            member = guild.get_member(uid) if guild else None
+
+            if member:
+                name = f"@{member.display_name}"
+            else:
+                user = self.bot.get_user(uid)
+                if user:
+                    name = f"@{user.name}"
+                else:
+                    name = f"@{uid}"
+
+            return (
+                f"<span class='mention user'>"
+                f"{html.escape(name)}"
+                f"</span>"
+            )
+
+        text = re.sub(r"<@!?(?P<id>\d+)>", repl_user, text)
+
+        # ---------- ROLES ----------
+        def repl_role(match):
+            rid = int(match.group(1))
+            role = guild.get_role(rid) if guild else None
+
+            if role:
+                name = f"@{role.name}"
+                # role.color returns a discord.Color
+                if role.color.value != 0:
+                    rgb = role.color.to_rgb()
+                    hex_color = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+                else:
+                    hex_color = "#5865f2"  # fallback
+            else:
+                name = f"@role-{rid}"
+                hex_color = "#5865f2"
+
+            return (
+                f"<span class='mention role' style='background:{hex_color}'>"
+                f"{html.escape(name)}"
+                f"</span>"
+            )
+
+        text = re.sub(r"<@&(\d+)>", repl_role, text)
+
+        return text
+
+    async def _render_embed_block(self, embed: Dict[str, Any]) -> str:
+        if not embed:
+            return ""
+        color = embed.get("color") or 0x5865F2
+        try:
+            color_hex = '#%02x%02x%02x' % ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+        except Exception:
+            color_hex = "#5865f2"
+        title = html.escape(embed.get("title", ""))
+        description = self._render_markdown_safe(embed.get("description", "") or "")
+        fields = embed.get("fields", [])
+        image_html = ""
+        if embed.get("image") and embed["image"].get("url"):
+            image_html = f"<div class='embed-image'><img src='{html.escape(embed['image']['url'])}' alt='embed image'></div>"
+        footer = html.escape(embed.get("footer", {}).get("text", "")) if embed.get("footer") else ""
+        parts = [f"<div class='embed' style='--embed-color:{color_hex}'>"]
+        if title:
+            parts.append(f"<div class='embed-title'>{title}</div>")
+        if description:
+            parts.append(f"<div class='embed-desc'>{description}</div>")
+        if fields:
+            parts.append("<div class='embed-fields'>")
+            for f in fields:
+                n = html.escape(f.get("name", ""))
+                v = self._render_markdown_safe(f.get("value", ""))
+                parts.append(f"<div class='embed-field'><div class='embed-field-name'>{n}</div><div class='embed-field-value'>{v}</div></div>")
+            parts.append("</div>")
+        if image_html:
+            parts.append(image_html)
+        if footer:
+            parts.append(f"<div class='embed-footer'>{footer}</div>")
+        parts.append("</div>")
+        return "".join(parts)
+
+    async def _on_click(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+        rows = await TranscriptDB.get_messages(self.channel_id)
+
+        normalized = []
+        for r in rows:
+            obj = {
+                "user_id": int(r[0]),
+                "content": r[1] or "",
+                "timestamp": int(r[2]) if len(r) > 2 and r[2] else int(time.time()),
+                "attachments": [],
+                "embeds": []
+            }
+            if len(r) > 3 and r[3]:
+                try:
+                    obj["attachments"] = json.loads(r[3])
+                except Exception:
+                    obj["attachments"] = []
+            if len(r) > 4 and r[4]:
+                try:
+                    obj["embeds"] = json.loads(r[4])
+                except Exception:
+                    obj["embeds"] = []
+            normalized.append(obj)
+
+        grouped = []
+        for row in normalized:
+            if not grouped or grouped[-1]["user_id"] != row["user_id"]:
+                grouped.append({
+                    "user_id": row["user_id"],
+                    "messages": [ {
+                        "content": row["content"],
+                        "timestamp": row["timestamp"],
+                        "attachments": row["attachments"],
+                        "embeds": row["embeds"]
+                    } ]
+                })
+            else:
+                grouped[-1]["messages"].append({
+                    "content": row["content"],
+                    "timestamp": row["timestamp"],
+                    "attachments": row["attachments"],
+                    "embeds": row["embeds"]
+                })
+
+        unique_ids = {g["user_id"] for g in grouped}
+        user_map = {}
+        for uid in unique_ids:
+            display, avatar, color_hex, is_bot = await self._resolve_member_info(guild, uid)
+            user_map[uid] = {
+                "display": display,
+                "avatar": avatar,
+                "color": color_hex,
+                "is_bot": is_bot
+            }
+
+        # build HTML
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        head = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transcript - {self.channel_id}</title>
+<style>
+:root{{--bg:#2f3136;--panel:#36393f;--muted:#b9bbbe;--bubble:#2f3136;--text:#dcddde;--accent:#00b894;}}
+html,body{{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}}
+.container{{max-width:1000px;margin:18px auto;padding:14px;background:var(--panel);border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.35)}}
+.header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}}
+.title{{font-size:18px;font-weight:700}}
+.sub{{color:var(--muted);font-size:12px}}
+.controls .btn{{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:6px 10px;border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px;margin-left:6px}}
+.messages{{margin-top:12px;display:flex;flex-direction:column;gap:6px}}
+.group{{display:flex;gap:12px;padding:8px;border-radius:10px;align-items:flex-start}}
+.group:hover{{background:rgba(255,255,255,0.02)}}
+.avatar{{width:44px;height:44px;border-radius:50%;flex:0 0 44px;object-fit:cover}}
+.meta{{flex:1;min-width:0}}
+.meta-top{{display:flex;align-items:center;gap:8px}}
+.name{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.bot-tag{{background:#5865f2;color:#fff;padding:2px 6px;font-size:11px;border-radius:6px;margin-left:6px}}
+.time{{color:var(--muted);font-size:12px}}
+.bubble{{margin-top:6px;padding:10px;border-radius:8px;background:linear-gradient(180deg, #26292d, #2b2f33);max-width:100%;white-space:pre-wrap;word-break:break-word}}
+.bubble p {{margin: 2px 0;}}
+blockquote{{
+  border-left:4px solid rgba(255,255,255,0.06);
+  margin:0 0 0 0;
+  padding:8px 12px;
+  background:rgba(0,0,0,0.1);
+  border-radius:6px;
+}}
+code{{background:rgba(0,0,0,0.25);padding:2px 6px;border-radius:6px}}
+pre code{{display:block;padding:12px;overflow:auto;border-radius:8px;background:#0f1720}}
+.inline-mention.user{{color:#58a6ff;font-weight:600}}
+.inline-mention.channel{{color:#00b894;font-weight:600}}
+.copy-menu{{position:relative;display:inline-block}}
+.menu-btn{{background:transparent;border:0;color:var(--muted);cursor:pointer;padding:6px;border-radius:6px}}
+.menu{{position:absolute;right:0;top:0;background:#202225;padding:6px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.6);display:none;z-index:20}}
+.group:hover .menu{{display:block}}
+.menu button{{
+  background:transparent;border:0;color:var(--muted);padding:6px 8px;border-radius:6px;cursor:pointer;display:block;text-align:left;width:100%
+}}
+.embed{{display:flex;border-radius:6px;overflow:hidden;margin-top:8px;border:1px solid rgba(255,255,255,0.03)}}
+.embed-side{{width:6px;background:var(--embed-color,#5865f2)}}
+.embed-body{{flex:1;padding:10px;background:#1f2124}}
+.embed-title{{font-weight:700;margin-bottom:6px}}
+.embed-desc{{margin-bottom:6px}}
+.embed-fields{{display:flex;flex-wrap:wrap;gap:8px}}
+.embed-field{{background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;min-width:120px;flex:1}}
+.attachment img{{max-width:380px;border-radius:6px;margin-top:8px;display:block}}
+.footer{{color:var(--muted);font-size:12px;margin-top:8px}}
+
+.mention {{
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    color: #ffffff;
+    background: #5865f2; /* default "mention blue" */
+    font-size: 0.9em;
+}}
+
+.mention.channel {{
+    background: #5865f2;
+}}
+
+.mention.user {{
+    background: #5865f2;
+}}
+
+.mention.role {{
+    /* role color gonna be applied inline */
+}}
+
+
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="title">Transcript</div>
+      <div class="sub">Channel ID: {self.channel_id} • Generated: {now_str}</div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="downloadHTML()">Download HTML</button>
+      <button class="btn" onclick="copyAll()">Copy All</button>
+    </div>
+  </div>
+  <div class="messages">
+"""
+
+        tail = """
+  </div>
+</div>
+
+<script>
+function downloadHTML(){
+  const blob = new Blob([document.documentElement.outerHTML], {type: 'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'transcript-{cid}.html';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function copyAll(){
+  let all = Array.from(document.querySelectorAll('.bubble')).map(b=>b.innerText).join('\\n\\n');
+  navigator.clipboard.writeText(all).then(()=>alert('Copied all messages')).catch(()=>alert('Copy failed'));
+}
+function copyText(text){ navigator.clipboard.writeText(text).then(()=>alert('Copied')).catch(()=>alert('Copy failed')) }
+function downloadText(name, text){
+  const blob = new Blob([text], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
+""".replace("{cid}", str(self.channel_id))
+
+        parts: List[str] = [head]
+        # render each grouped message
+        for g in grouped:
+            uid = g["user_id"]
+            info = user_map.get(uid, {"display": str(uid), "avatar": "https://cdn.discordapp.com/embed/avatars/0.png", "color": "#ffffff", "is_bot": False})
+            display = html.escape(info["display"])
+            avatar = html.escape(info["avatar"]) if info.get("avatar") else "https://cdn.discordapp.com/embed/avatars/0.png"
+            color = info.get("color", "#ffffff")
+            is_bot = info.get("is_bot", False)
+            first_ts = g["messages"][0]["timestamp"]
+            time_str = datetime.fromtimestamp(first_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+            bubble_fragments: List[str] = []
+            copy_fragments: List[str] = []
+            for m in g["messages"]:
+                raw = m.get("content", "") or ""
+                resolved = self._resolve_mentions(guild, raw)
+                rendered = self._render_markdown_safe(resolved)
+                bubble_fragments.append(rendered)
+                copy_fragments.append(re.sub(r'\s+', ' ', resolved).strip())
+
+                # attachments
+                at_html = ""
+                for att in (m.get("attachments") or []):
+                    if isinstance(att, dict) and att.get("url"):
+                        at_html += f"<div class='attachment'><img src='{html.escape(att['url'])}' alt='attachment'></div>"
+
+                # embeds
+                emb_html = ""
+                for emb in (m.get("embeds") or []):
+                    try:
+                        emb_html += await self._render_embed_block(emb if isinstance(emb, dict) else json.loads(emb))
+                    except Exception:
+                        pass
+
+                if at_html:
+                    bubble_fragments.append(at_html)
+                if emb_html:
+                    bubble_fragments.append(emb_html)
+
+            bubble_html = "".join(bubble_fragments)
+            copy_blob = "\n\n".join(copy_fragments).replace("`", "'")
+
+            group_html = f"""
+<div class="group">
+  <img class="avatar" src="{avatar}" alt="avatar">
+  <div class="meta">
+    <div class="meta-top">
+      <div class="name" style="color:{color}">{display}</div>
+      {"<div class='bot-tag'>BOT</div>" if is_bot else ""}
+      <div class="time">· {time_str}</div>
+      <div class="copy-menu" style="margin-left:auto">
+        <button class="menu-btn">⋯</button>
+      </div>
+    </div>
+    <div class="bubble" id="msg_{uid}_{first_ts}">{bubble_html}</div>
+  </div>
+</div>
+"""
+            parts.append(group_html)
+
+        parts.append(tail)
+        final_html = "".join(parts)
+
+        filename = f"transcript-{self.channel_id}.html"
+        with open(filename, "w", encoding="utf-8") as fh:
+            fh.write(final_html)
+
+        try:
+            await interaction.followup.send(content="Transcript generated.", file=discord.File(filename), ephemeral=True)
+        except Exception:
+            await interaction.followup.send(content="Transcript generated (couldn't attach file).", ephemeral=True)
+
 async def log_ticket_closure(bot: commands.Bot, channel: discord.TextChannel, user: discord.User, creator: discord.User, reason: Optional[str] = None):
     log_channel = bot.get_channel(TICKET_LOG_CHANNEL_ID)
     if not log_channel:
@@ -483,8 +927,8 @@ async def log_ticket_closure(bot: commands.Bot, channel: discord.TextChannel, us
     embed.add_field(name="<:reason:1446929098017476841> Close Reason",
                     value=f"{reason}",
                     inline=False)
-
-    await log_channel.send(embed=embed)
+    await TranscriptDB.register_ticket_channel(channel.id)
+    await log_channel.send(embed=embed, view=TranscriptButton(bot, channel.id))
     try:
         await creator.send(content="Thanks for contacting support", embed=embed)
     except discord.Forbidden:
@@ -554,11 +998,11 @@ class TicketReportModal(discord.ui.Modal, title="Player Report Form"):
         required=True,
         max_length=1000
     )
-    additional_info = discord.ui.TextInput(
-        label="Any additional info?",
-        placeholder="Optional",
+    has_proof = discord.ui.TextInput(
+        label="Do you have evidence?",
+        placeholder="Yes | No",
         required=False,
-        max_length=300
+        max_length=3
     )
     def __init__(self, reason: str, interaction: discord.Interaction, parent_view):
         super().__init__()
@@ -568,10 +1012,10 @@ class TicketReportModal(discord.ui.Modal, title="Player Report Form"):
     async def on_submit(self, interaction: discord.Interaction):
         answers = {
             "name": self.name.value,
-            "reportee": self.reportee_name.value,
+            "reported_user": self.reportee_name.value,
             "place": self.place.value,
-            "reason": self.report_reason.value,
-            "additional": self.additional_info.value
+            "report_reason": self.report_reason.value,
+            "has_proof": self.has_proof.value
         }
         await self.parent_view.create_ticket(interaction, self.reason, answers)
 class TicketApplicationModal(discord.ui.Modal, title="StrengthKits Staff Member Application"):
@@ -648,6 +1092,25 @@ class TicketSupportModal(discord.ui.Modal, title="Contact Support"):
         answers = {
             "name": self.name.value,
             "support_reason": self.support_reason.value,
+        }
+        await self.parent_view.create_ticket(interaction, self.reason, answers)
+
+class TicketQuestionModal(discord.ui.Modal, title="Contact Support"):
+    question = discord.ui.TextInput(
+        style=discord.TextStyle.paragraph,
+        label="What is your question?",
+        placeholder="Spam/troll tickets will result in a ban",
+        required=True,
+        max_length=1000
+    )
+    def __init__(self, reason: str, interaction: discord.Interaction, parent_view):
+        super().__init__()
+        self.reason = reason
+        self.interaction = interaction
+        self.parent_view = parent_view
+    async def on_submit(self, interaction: discord.Interaction):
+        answers = {
+            "question": self.question.value
         }
         await self.parent_view.create_ticket(interaction, self.reason, answers)
 
@@ -1105,10 +1568,14 @@ async def on_ready():
             save_ticket_channels(ticket_channels)
     for guild in bot.guilds:
         bot.add_view(VerificationView(bot, guild.id))
+    channel_ids = await TranscriptDB.get_all_ticket_channels()
+    for cid in channel_ids:
+        bot.add_view(TranscriptButton(bot, cid))
+        verbose.send(f"Restored transcript view ID: {cid}")
     bot.add_view(TicketView())
     update_uptime.start()
 
-@tasks.loop(seconds=2)
+@tasks.loop(seconds=5)
 async def update_uptime():
     elapsed = int(time.time() - start_time)
     hours, remainder = divmod(elapsed, 3600)

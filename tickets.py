@@ -3,10 +3,10 @@ import asyncio
 import os
 
 async def create_ticket_db():
-    if os.path.exists("tickets.db"):
-        os.remove("tickets.db")
+    if os.path.exists("data/databases/tickets.db"):
+        os.remove("data/databases/tickets.db")
         print("Existing database deleted.")
-    async with aiosqlite.connect("tickets.db") as db:
+    async with aiosqlite.connect("data/databases/tickets.db") as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
                 channel_id INTEGER PRIMARY KEY,
