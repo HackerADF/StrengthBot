@@ -6,9 +6,6 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "..", "data", "databases", "transcripts.db")
 
 class TranscriptDB:
-    # -----------------------------
-    # MESSAGE STORAGE
-    # -----------------------------
     @staticmethod
     async def add_message(channel_id: int, user_id: int, content: str):
         async with aiosqlite.connect(DB_PATH) as db:
@@ -35,9 +32,6 @@ class TranscriptDB:
             await db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
             await db.commit()
 
-    # -----------------------------
-    # TRACK TICKET CHANNELS
-    # -----------------------------
     @staticmethod
     async def register_ticket_channel(channel_id: int):
         """Add a channel to the persistent list if it isn't already registered."""

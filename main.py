@@ -325,14 +325,16 @@ class TicketView(discord.ui.View):
             ticket_channels.append(channel.id)
             save_ticket_channels(ticket_channels)
         user_ticket_count = await getUserTicketCount(user)
+        desc_text1 = "**Thank you for contacting support.**" if reason != "staff application" else "**Thank you for your interest in further supporting our server!**"
+        desc_text2 = "**Please provide any evidence you have below**" if reason in ["bug report", "player report"] else ""
         embed = discord.Embed(
-            description=f"# {user.mention}\nUser ticket **#{user_ticket_count}**\n\n# __{reason.capitalize()}__\n\n## **Thank you for contacting support.**\n\n## **Please provide any evidence you have below**",
+            description=f"# {user.mention}\nUser ticket **#{user_ticket_count}**\n\n# __{reason.capitalize()}__\n\n## {desc_text1}\n\n## {desc_text2}",
             color=0x21d391
         )
 
         embed.set_footer(text="Powered by ADF Industries",
                          icon_url=bot.user.avatar.url)
-        embed.set_author(name="✅ Ticket Created! - Welcome to the support channel.")
+        embed.set_author(name="✅ Ticket Created! - Welcome to your new support channel.")
         await channel.send("<@&1346650884838260860>", embed=embed)
 
         answers = answers
@@ -346,21 +348,17 @@ class TicketView(discord.ui.View):
                     f"**Why should your punishment be revoked?**\n```{answers['revoke_reason'] if answers['revoke_reason'] else 'No answer provided.'}```\n"
                 ),
             )
-            await channel.send(embed=embed, view=TicketPanelView(channel))
-
         elif reason.lower() == "need support":
             embed = discord.Embed(title="Please answer the following questions:",
                                   description=(
                                       f"**What is your name?**\n```{answers['name']}```\n"
                                       f"**How can we assist you today?**\n```{answers['support_reason']}```\n"
                                   ))
-            await channel.send(embed=embed, view=TicketPanelView(channel))
         elif reason.lower() == "ask a question":
             embed = discord.Embed(title="Please answer the following questions:",
                                   description=(
                                       f"**What is your question?**\n```{answers['question']}```\n"
                                   ))
-            await channel.send(embed=embed, view=TicketPanelView(channel))
         elif reason.lower() == "report a bug":
             embed = discord.Embed(
                 description=(
@@ -371,7 +369,6 @@ class TicketView(discord.ui.View):
                     f"**Any additional information?**:\n```{answers['additional'] if answers['additional'] else 'No answer provided.'}```"
                 )
             )
-            await channel.send(embed=embed, view=TicketPanelView(channel))
         elif reason.lower() == "report a user":
             embed = discord.Embed(
                 description=(
@@ -382,7 +379,6 @@ class TicketView(discord.ui.View):
                     f"**Do you have Evidence?**\n```{answers['has_proof']}```\n"
                 )
             )
-            await channel.send(embed=embed, view=TicketPanelView(channel))
         elif reason.lower() == "staff application":
             embed = discord.Embed(
                 description=(
@@ -393,10 +389,11 @@ class TicketView(discord.ui.View):
                     f"**Any additional information?**:\n```{answers['additional'] if answers['additional'] else 'No answer provided.'}```"
                 )
             )
-            msg = await channel.send(embed=embed, view=TicketPanelView(channel))
-            await msg.pin()
         else:
             return
+
+        msg = await channel.send(embed=embed, view=TicketPanelView(channel))
+        await msg.pin()
         embed = discord.Embed(description=f"Opened a new ticket: {channel.mention}",
                               colour=0x21d391)
 
@@ -892,7 +889,7 @@ function downloadText(name, text){
         parts.append(tail)
         final_html = "".join(parts)
 
-        filename = f"transcript-{self.channel_id}.html"
+        filename = f"data/tickets/transcripts/transcript-{self.channel_id}.html"
         with open(filename, "w", encoding="utf-8") as fh:
             fh.write(final_html)
 
