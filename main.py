@@ -1299,7 +1299,7 @@ async def master(interaction: discord.Interaction, action: str):
         await interaction.channel.send(embed=embed)
     elif action == "tp":
         embed = discord.Embed(
-            description="# **STRKitz - Tickets**"
+            description="# **Luminox - Tickets**"
                         "\n*Come in contact with our staff team by creating a ticket.*"
                         "\n\n**How to create a ticket:**"
                         "\n> Click the drop-down below, to select a category"
