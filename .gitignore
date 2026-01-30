@@ -3,5 +3,10 @@
 .env
 .venv/
 .idea/
+lib/
+libs/
+venv/
 *.pyc
 *.whl
+*.json
+.*

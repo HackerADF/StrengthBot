@@ -19,8 +19,8 @@ class HelpCog(commands.Cog):
         embed.add_field(
             name="🟩 How to Join the Minecraft Server",
             value=(
-                "**Java Edition:** `strengthkits.minehut.gg`\n"
-                "**Bedrock Edition:** `strengthkits.bedrock.minehut.gg`\n"
+                "**Java Edition:** `luminox.minehut.gg`\n"
+                "**Bedrock Edition:** `luminox.bedrock.minehut.gg`\n"
                 "Make sure you're on the correct version!"
             ),
             inline=False

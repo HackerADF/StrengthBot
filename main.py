@@ -1015,7 +1015,7 @@ class TicketReportModal(discord.ui.Modal, title="Player Report Form"):
             "has_proof": self.has_proof.value
         }
         await self.parent_view.create_ticket(interaction, self.reason, answers)
-class TicketApplicationModal(discord.ui.Modal, title="StrengthKits Staff Member Application"):
+class TicketApplicationModal(discord.ui.Modal, title="Luminox Staff Member Application"):
     name = discord.ui.TextInput(
         label="What is your Minecraft username?",
         placeholder="Enter your Minecraft username here...",
@@ -1025,21 +1025,21 @@ class TicketApplicationModal(discord.ui.Modal, title="StrengthKits Staff Member 
     why = discord.ui.TextInput(
         style=discord.TextStyle.paragraph,
         label="Why do you want to join the staff team?",
-        placeholder="Explain why you wish to become a member of the StrengthKits Staff Team",
+        placeholder="Explain why you wish to become a member of the Luminox Staff Team. (75+ words)",
         required=True,
         max_length=1000
     )
     experience = discord.ui.TextInput(
         style=discord.TextStyle.paragraph,
         label="Do you have past experience?",
-        placeholder="If you have past staff experience, not required however will help!",
+        placeholder="If you have past staff experience, not required however experience is preferred",
         required=True,
         max_length=2000
     )
     candidate = discord.ui.TextInput(
         style=discord.TextStyle.paragraph,
         label="What makes you a better candidate?",
-        placeholder="Why should we pick you over other applicants? What are your strengths? weaknesses?",
+        placeholder="Why should we pick you over other applicants? What are your strengths? weaknesses? (100+ words)",
         required=True,
         max_length=1000
     )
@@ -1223,12 +1223,12 @@ async def master(interaction: discord.Interaction, action: str):
         return
     if action == "vp":
         embed = discord.Embed(
-            title="Welcome to Strength Kits",
+            title="Welcome to Luminox",
             description=(
                 "Please verify by pressing the button below to ensure you are not a bot!\n\n**⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻**\n\n"
                 "> **Welcome to Strength Kits!**  \n\n"
-                "```\nStrengthSMP | PvP | Free Kits\n```\n\n"
-                "**Strength Kits** is a Minecraft server dedicated to providing a space for players"
+                "```\nDiamond SMP | Kit PvP | Free Kits\n```\n\n"
+                "**Luminox Kits** is a Minecraft server dedicated to providing a space for players"
                 "to practice StrengthSMP! \n\n"
                 "We're dedicated and trusted among many PvPers and SMP players alike.\n"
                 "\n\nGet ready to experience the StrengthSMP Practice Server!"
@@ -1246,9 +1246,9 @@ async def master(interaction: discord.Interaction, action: str):
         await interaction.channel.send(embed=embed, view=view)
     elif action == "ip":
         embed = discord.Embed(
-            title="Welcome to StrengthKits",
+            title="Welcome to Luminox",
             description=(
-                "StrengthKits is the official practice environment for the StrengthSMP community. "
+                "Luminox is the official practice environment for the DiamondSMP community. "
                 "Our goal is to provide a fast, competitive, and polished PvP experience modeled after the "
                 "StrengthSMP combat system.\n\n"
 
@@ -1551,7 +1551,7 @@ async def on_ready():
     _log.info(f"Synced {len(synced_commands)} global slash command(s).")
     guild = discord.Object(id=1446711845787275404)
     await bot.tree.sync(guild=guild)
-    _log.info("StrengthKits' specific commands have been registered & synced!\n")
+    _log.info("Luminox' specific commands have been registered & synced!\n")
     _log.info(f"Successfully loaded Strength Bot (v1)!")
     ticket_channels = load_ticket_channels()
     for channel_id in ticket_channels:

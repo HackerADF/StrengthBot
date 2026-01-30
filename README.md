@@ -1,6 +1,6 @@
-# **StrengthKits Discord Bot**
+# **Luminox Discord Bot**
 
-A fully-featured Discord bot built for **StrengthKits** — handling **ticketing**, **staff applications**, **bug/user reports**, **verification**, and automated category-based channel routing.
+A fully-featured Discord bot built for **Luminox** — handling **ticketing**, **staff applications**, **bug/user reports**, **verification**, and automated category-based channel routing.
 
 This bot uses:
 
@@ -213,4 +213,4 @@ CREATE TABLE IF NOT EXISTS tickets (
 
 ## 📬 **Support**
 
-For bug reports or issues, DM **ADF** or create a ticket in the StrengthKits Discord.
+For bug reports or issues, DM **ADF** or create a ticket in the Luminox Discord.
